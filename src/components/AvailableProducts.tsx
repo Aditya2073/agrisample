@@ -44,13 +44,22 @@ export const AvailableProducts: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('produce')
-        .select('*')
+        .select('*, farmer:profiles!produce_farmer_id_fkey(*)')
         .eq('status', 'available')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setProduces(data || []);
+      if (error) {
+        console.error('Error loading marketplace:', error);
+        throw error;
+      }
+      
+      if (!data) {
+        throw new Error('No data received from the server');
+      }
+      
+      setProduces(data);
     } catch (err) {
+      console.error('Failed to load marketplace:', err);
       setError(err instanceof Error ? err.message : 'Failed to load marketplace');
     } finally {
       setLoading(false);
@@ -62,78 +71,115 @@ export const AvailableProducts: React.FC = () => {
     if (!selectedProduce || !user) return;
 
     setLoading(true);
+    setError('');
+    
     try {
       const totalPrice = selectedProduce.price * orderQuantity;
 
-      // Start a transaction to update both orders and produce
-      const { data: updatedProduce, error: produceError } = await supabase
+      // First check if the produce is still available and get farmer details
+      const { data: produceCheck, error: checkError } = await supabase
         .from('produce')
-        .update({ quantity: selectedProduce.quantity - orderQuantity })
+        .select(`
+          *,
+          farmer:profiles!produce_farmer_id_fkey(*)
+        `)
         .eq('id', selectedProduce.id)
-        .select()
-        .single();
+        .eq('status', 'available')
+        .maybeSingle();
 
-      if (produceError) throw produceError;
+      if (checkError) throw checkError;
 
-      const { error: orderError } = await supabase.from('orders').insert([
-        {
+      if (!produceCheck) {
+        throw new Error('Product no longer available');
+      }
+
+      if (produceCheck.quantity < orderQuantity) {
+        throw new Error('Not enough quantity available');
+      }
+
+      // Update the produce quantity
+      const newQuantity = produceCheck.quantity - orderQuantity;
+      const { error: produceError } = await supabase
+        .from('produce')
+        .update({ 
+          quantity: newQuantity,
+          status: newQuantity === 0 ? 'sold' : 'available'
+        })
+        .eq('id', selectedProduce.id)
+        .eq('status', 'available');
+
+      if (produceError) {
+        console.error('Error updating produce:', produceError);
+        throw produceError;
+      }
+
+      // Create the order
+      const { error: orderError } = await supabase
+        .from('orders')
+        .insert({
           produce_id: selectedProduce.id,
           buyer_id: user.id,
+          seller_id: produceCheck.farmer_id,
           quantity: orderQuantity,
           total_price: totalPrice,
-          seller_id: selectedProduce.farmer_id,
           status: 'pending'
-        },
-      ]);
+        });
 
-      if (orderError) throw orderError;
+      if (orderError) {
+        console.error('Error creating order:', orderError);
+        throw orderError;
+      }
 
+      // Reset state and reload marketplace
       setSelectedProduce(null);
+      setOrderQuantity(1);
       await loadMarketplace();
     } catch (err) {
+      console.error('Failed to place order:', err);
       setError(err instanceof Error ? err.message : 'Failed to place order');
     } finally {
       setLoading(false);
     }
   };
 
+  const handlePurchase = handleOrder;
+
   return (
-    <div className="mt-12">
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Available Produce</h2>
+    <div className="space-y-8">
+      <h2 className="text-2xl font-bold text-gray-900">Available Produce</h2>
 
       {error && (
-        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-lg flex items-center shadow-sm">
+        <div className="bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-lg flex items-center shadow-sm">
           <AlertCircle className="h-5 w-5 mr-3" />
           {error}
         </div>
       )}
 
       {/* Search and Filter Section */}
-      <div className="mt-12 space-y-6">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="relative flex-1">
-            <input
-              type="text"
-              placeholder="Search produce..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-4 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-            />
-          </div>
-          <select
-            value={selectedFilter}
-            onChange={(e) => setSelectedFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
-          >
-            <option value="all">All Produce</option>
-            <option value="low-to-high">Price: Low to High</option>
-            <option value="high-to-low">Price: High to Low</option>
-            <option value="available">Available Only</option>
-          </select>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="relative flex-1">
+          <input
+            type="text"
+            placeholder="Search produce..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-4 pr-10 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
+          />
         </div>
+        <select
+          value={selectedFilter}
+          onChange={(e) => setSelectedFilter(e.target.value)}
+          className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent bg-white"
+        >
+          <option value="all">All Produce</option>
+          <option value="low-to-high">Price: Low to High</option>
+          <option value="high-to-low">Price: High to Low</option>
+          <option value="available">Available Only</option>
+        </select>
       </div>
       
-      <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Products Grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredProduces.map((produce) => (
           <div
             key={produce.id}
@@ -142,20 +188,25 @@ export const AvailableProducts: React.FC = () => {
             <div className="p-6">
               <h3 className="text-xl font-semibold text-gray-900">{produce.name}</h3>
               <p className="mt-2 text-gray-600">{produce.description}</p>
-              <div className="mt-6 space-y-2">
+              <div className="mt-4">
                 <p className="text-3xl font-bold text-gray-900">
                   ₹{produce.price}
                   <span className="text-sm text-gray-500">/{produce.unit}</span>
                 </p>
-                <p className="text-sm text-gray-600">
+                <p className="mt-2 text-sm text-gray-600">
                   Available: {produce.quantity} {produce.unit}
                 </p>
               </div>
               <button
                 onClick={() => setSelectedProduce(produce)}
-                className="mt-6 w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white px-4 py-3 rounded-lg font-medium hover:from-green-700 hover:to-emerald-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 transition-all duration-300 transform hover:scale-[1.02]"
+                disabled={produce.quantity === 0}
+                className={`mt-6 w-full px-4 py-3 rounded-lg font-medium transition-colors duration-200 ${
+                  produce.quantity === 0
+                    ? 'bg-gray-200 text-gray-500 cursor-not-allowed'
+                    : 'bg-gradient-to-r from-green-600 to-emerald-600 text-white hover:from-green-700 hover:to-emerald-700'
+                }`}
               >
-                Purchase
+                {produce.quantity === 0 ? 'Out of Stock' : 'Purchase'}
               </button>
             </div>
           </div>
@@ -164,54 +215,40 @@ export const AvailableProducts: React.FC = () => {
 
       {/* Purchase Modal */}
       {selectedProduce && (
-        <div className="fixed inset-0 bg-gray-900 bg-opacity-75 backdrop-blur-sm flex items-center justify-center transition-opacity duration-300">
-          <div className="bg-white rounded-xl p-8 max-w-md w-full shadow-2xl transform transition-all duration-300">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">Purchase Produce</h2>
-            <form onSubmit={handleOrder} className="space-y-6">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 max-w-md w-full">
+            <h3 className="text-xl font-semibold text-gray-900 mb-4">Purchase {selectedProduce.name}</h3>
+            <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {selectedProduce.name}
-                </label>
-                <p className="text-gray-600">{selectedProduce.description}</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Quantity ({selectedProduce.unit})
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Quantity ({selectedProduce.unit})</label>
                 <input
                   type="number"
                   min="1"
                   max={selectedProduce.quantity}
                   value={orderQuantity}
-                  onChange={(e) => setOrderQuantity(Number(e.target.value))}
-                  className="block w-full rounded-lg border-gray-300 shadow-sm focus:border-green-500 focus:ring-green-500 transition-colors duration-200"
+                  onChange={(e) => setOrderQuantity(Math.min(Math.max(1, parseInt(e.target.value) || 1), selectedProduce.quantity))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Total Price
-                </label>
-                <p className="text-3xl font-bold text-gray-900">
-                  ₹{selectedProduce.price * orderQuantity}
-                </p>
+              <div className="text-right text-lg font-semibold text-gray-900">
+                Total: ₹{(selectedProduce.price * orderQuantity).toFixed(2)}
               </div>
-              <div className="flex justify-end space-x-4 mt-8">
+              <div className="flex gap-4">
                 <button
-                  type="button"
                   onClick={() => setSelectedProduce(null)}
-                  className="px-6 py-2.5 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors duration-200"
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 transition-colors duration-200"
                 >
                   Cancel
                 </button>
                 <button
-                  type="submit"
+                  onClick={handlePurchase}
                   disabled={loading}
-                  className="px-6 py-2.5 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-lg hover:from-green-700 hover:to-emerald-700 transition-colors duration-200 disabled:opacity-50"
                 >
                   {loading ? 'Processing...' : 'Confirm Purchase'}
                 </button>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}

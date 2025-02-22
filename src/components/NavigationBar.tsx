@@ -4,7 +4,7 @@ import { NavLink } from 'react-router-dom';
 export const NavigationBar: React.FC = () => {
   return (
     <nav className="bg-white shadow-lg rounded-lg p-4 mb-8">
-      <ul className="flex space-x-8">
+      <ul className="flex space-x-8 justify-end">
         <li>
           <NavLink
             to="/buyer/products"

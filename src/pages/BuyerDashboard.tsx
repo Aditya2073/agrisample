@@ -40,6 +40,7 @@ export const BuyerDashboard: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
+      <NavigationBar />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Header
           title={`Welcome, ${user?.name}`}
@@ -47,54 +48,53 @@ export const BuyerDashboard: React.FC = () => {
         />
 
         {/* Quick Stats */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 mt-8 mb-8">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 mt-8">
           <div className="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300 p-6 border border-gray-100">
-            <div className="flex items-center space-x-4">
-              <div className="p-3 bg-blue-100 rounded-lg">
+            <div className="flex items-center">
+              <div className="p-3 rounded-full bg-blue-50">
                 <ShoppingBag className="h-8 w-8 text-blue-600" />
               </div>
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Total Orders</h2>
-                <p className="text-3xl font-bold text-blue-600 mt-1">{totalOrders}</p>
+              <div className="ml-4">
+                <h3 className="text-lg font-medium text-gray-900">Pending Orders</h3>
+                <p className="text-2xl font-semibold text-gray-700">{pendingOrders}</p>
               </div>
             </div>
           </div>
 
           <div className="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300 p-6 border border-gray-100">
-            <div className="flex items-center space-x-4">
-              <div className="p-3 bg-yellow-100 rounded-lg">
-                <Package className="h-8 w-8 text-yellow-600" />
+            <div className="flex items-center">
+              <div className="p-3 rounded-full bg-green-50">
+                <Package className="h-8 w-8 text-green-600" />
               </div>
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Pending Orders</h2>
-                <p className="text-3xl font-bold text-yellow-600 mt-1">{pendingOrders}</p>
+              <div className="ml-4">
+                <h3 className="text-lg font-medium text-gray-900">Total Orders</h3>
+                <p className="text-2xl font-semibold text-gray-700">{totalOrders}</p>
               </div>
             </div>
           </div>
 
           <div className="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300 p-6 border border-gray-100">
-            <div className="flex items-center space-x-4">
-              <div className="p-3 bg-purple-100 rounded-lg">
+            <div className="flex items-center">
+              <div className="p-3 rounded-full bg-purple-50">
                 <CreditCard className="h-8 w-8 text-purple-600" />
               </div>
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">Total Spent</h2>
-                <p className="text-3xl font-bold text-purple-600 mt-1">₹{totalSpent}</p>
+              <div className="ml-4">
+                <h3 className="text-lg font-medium text-gray-900">Total Spent</h3>
+                <p className="text-2xl font-semibold text-gray-700">₹{totalSpent}</p>
               </div>
             </div>
           </div>
         </div>
 
-        <div style={{zIndex:0}} className="sticky top-0 z-10 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 pt-4 pb-4">
-          <NavigationBar />
-        </div>
-
-        <div className="mt-4">
-          <Routes>
-            <Route path="/" element={<Navigate to="products" replace />} />
-            <Route path="products" element={<AvailableProducts />} />
-            <Route path="orders" element={<OrderHistory />} />
-          </Routes>
+        {/* Navigation */}
+        <div className="mt-8">
+          <nav className="bg-white shadow-lg rounded-lg p-4">
+            <Routes>
+              <Route path="/" element={<Navigate to="products" replace />} />
+              <Route path="products" element={<AvailableProducts />} />
+              <Route path="orders" element={<OrderHistory orders={orders} />} />
+            </Routes>
+          </nav>
         </div>
       </div>
     </div>

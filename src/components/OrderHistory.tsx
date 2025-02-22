@@ -30,20 +30,53 @@ export const OrderHistory: React.FC = () => {
 
   const loadOrders = async () => {
     try {
-      const { data, error } = await supabase
+      // First fetch orders
+      const { data: orderData, error: orderError } = await supabase
         .from('orders')
         .select(`
           *,
-          produce:produce(*),
-          seller:profiles!orders_seller_id_fkey(*),
-          buyer:profiles!orders_buyer_id_fkey(*)
+          produce:produce_id(
+            id,
+            name,
+            description,
+            price,
+            quantity,
+            status,
+            created_at
+          ),
+          seller:seller_id(
+            id,
+            name,
+            email
+          ),
+          buyer:buyer_id(
+            id,
+            name,
+            email
+          )
         `)
         .eq('buyer_id', user?.id)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (orderError) {
+        console.error('Error fetching orders:', orderError);
+        throw orderError;
+      }
+
+      if (!orderData) {
+        throw new Error('No order data received');
+      }
+
+      // Transform the data to match the expected format
+      const transformedOrders = orderData.map(order => ({
+        ...order,
+        produce: order.produce,
+        seller: order.seller,
+        buyer: order.buyer
+      }));
+
       if (mounted) {
-        setOrders(data || []);
+        setOrders(transformedOrders);
         setError(null);
       }
     } catch (err) {
@@ -60,14 +93,26 @@ export const OrderHistory: React.FC = () => {
   };
 
   const getStatusStyle = (status: string) => {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'completed':
         return 'bg-green-100 text-green-800';
       case 'pending':
         return 'bg-yellow-100 text-yellow-800';
+      case 'cancelled':
+        return 'bg-red-100 text-red-800';
       default:
         return 'bg-gray-100 text-gray-800';
     }
+  };
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   };
 
   if (loading) {
@@ -100,75 +145,52 @@ export const OrderHistory: React.FC = () => {
           <p>No orders found</p>
         </div>
       ) : (
-        <div className="bg-white shadow-lg rounded-xl overflow-hidden border border-gray-100">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Produce
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Quantity
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Buyer
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Price
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Seller Details
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {orders.map((order) => (
-                  <tr key={order.id} className="hover:bg-gray-50 transition-colors duration-200">
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">
-                        {order.produce.name}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">
-                        {order.quantity} {order.produce.unit}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">
-                        <p className="font-medium">{order.buyer?.name || 'Unknown Buyer'}</p>
-                        <p className="text-gray-500">{order.buyer?.phone || 'No phone number'}</p>
-                        <p className="text-gray-500">{order.buyer?.email || 'No email'}</p>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">
-                        ₹{order.total_price}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span
-                        className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getStatusStyle(order.status)}`}
-                      >
-                        {order.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">
-                        <p className="font-medium">{order.seller?.name || 'Unknown Seller'}</p>
-                        <p className="text-gray-500">{order.seller?.phone || 'No phone number'}</p>
-                        <p className="text-gray-500">{order.seller?.email || 'No email'}</p>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div className="space-y-6">
+          {orders.map((order) => (
+            <div
+              key={order.id}
+              className="bg-white rounded-lg shadow-md p-6 border border-gray-200"
+            >
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    {order.produce?.name}
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Order placed on {formatDate(order.created_at)}
+                  </p>
+                </div>
+                <div className="mt-4 md:mt-0">
+                  <span
+                    className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusStyle(
+                      order.status
+                    )}`}
+                  >
+                    {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                  </span>
+                </div>
+              </div>
+              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Quantity</p>
+                  <p className="mt-1">{order.quantity} units</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Price per unit</p>
+                  <p className="mt-1">₹{order.produce?.price}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-gray-500">Total Amount</p>
+                  <p className="mt-1 font-semibold text-green-600">₹{order.total_price}</p>
+                </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <p className="text-sm text-gray-500">
+                  Seller: {order.seller?.name}
+                </p>
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

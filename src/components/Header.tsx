@@ -29,12 +29,12 @@ export const Header: React.FC<HeaderProps> = ({ title, subtitle }) => {
 
   return (
     <div className="py-8">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex items-center">
+        <div className="flex-1">
           <h1 className="text-3xl font-bold text-gray-900">{title}</h1>
           <p className="mt-1 text-sm text-gray-500">{subtitle}</p>
         </div>
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-4 ml-8">
           <button
             onClick={() => setShowProfileModal(true)}
             className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"

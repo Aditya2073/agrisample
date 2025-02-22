@@ -2,9 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
 import { supabase } from '../lib/supabase';
 import { Produce } from '../types';
-import { Plus, Package, Truck, Settings, AlertCircle } from 'lucide-react';
+import { Plus, Package, Truck, Settings, AlertCircle, MessageSquare } from 'lucide-react';
 import { Header } from '../components/Header';
 import { Routes, Route, Navigate, NavLink } from 'react-router-dom';
+import { ProduceListings } from '../components/ProduceListings';
+import { IncomingOrders } from '../components/IncomingOrders';
+import { AIChat } from '../components/AIChat';
 
 export const FarmerDashboard: React.FC = () => {
   const user = useAuthStore((state) => state.user);
@@ -20,6 +23,7 @@ export const FarmerDashboard: React.FC = () => {
     unit: 'kg',
     price: 0,
   });
+  const [showAIChat, setShowAIChat] = useState(false);
 
   useEffect(() => {
     loadProduces();
@@ -41,8 +45,10 @@ export const FarmerDashboard: React.FC = () => {
     }
   };
 
-  const handleOrderStatus = async (orderId: string, status: 'accepted' | 'declined' | 'completed') => {
+  const handleOrderStatus = async (orderId: string, newStatus: 'completed' | 'cancelled' | 'shipped' | 'delivered') => {
     setLoading(true);
+    setError('');
+    
     try {
       const { data: orderData, error: orderError } = await supabase
         .from('orders')
@@ -53,30 +59,34 @@ export const FarmerDashboard: React.FC = () => {
       if (orderError) throw orderError;
       if (!orderData) throw new Error('Order not found');
 
-      // Start a transaction for completed orders
-      if (status === 'completed') {
+      // For completed orders, we need to update the produce quantity
+      if (newStatus === 'completed') {
         const newQuantity = orderData.produce.quantity - orderData.quantity;
         if (newQuantity < 0) {
           throw new Error('Insufficient produce quantity');
         }
 
-        // Update produce quantity and order status atomically
-        const { error: updateError } = await supabase.rpc('update_order_and_produce', {
-          p_order_id: orderId,
-          p_produce_id: orderData.produce_id,
-          p_new_quantity: newQuantity,
-          p_new_status: status
-        });
+        // Update produce quantity and status
+        const { error: produceError } = await supabase
+          .from('produce')
+          .update({ 
+            quantity: newQuantity,
+            status: newQuantity === 0 ? 'sold' : 'available'
+          })
+          .eq('id', orderData.produce_id);
 
-        if (updateError) throw updateError;
-      } else {
-        // For non-completed statuses, just update the order
-        const { error } = await supabase
-          .from('orders')
-          .update({ status })
-          .eq('id', orderId);
+        if (produceError) throw produceError;
+      }
 
-        if (error) throw error;
+      // Update order status
+      const { error: statusError } = await supabase
+        .from('orders')
+        .update({ status: newStatus })
+        .eq('id', orderId);
+
+      if (statusError) {
+        console.error('Error updating order status:', statusError);
+        throw new Error('Could not update order status. The order may have already been processed.');
       }
 
       await Promise.all([loadOrders(), loadProduces()]);
@@ -136,17 +146,96 @@ export const FarmerDashboard: React.FC = () => {
     }
   };
 
+  const handleAIAction = async (action: string, data: any) => {
+    switch (action) {
+      case 'ADD_PRODUCE':
+        try {
+          // Format the data
+          const produceData = {
+            name: data.name,
+            description: data.description,
+            quantity: parseFloat(data.quantity),
+            unit: data.unit || 'kg',
+            price: parseFloat(data.price),
+            farmer_id: user?.id,
+            status: 'available',
+            created_at: new Date().toISOString()
+          };
+
+          // Insert into Supabase
+          const { error } = await supabase
+            .from('produce')
+            .insert([produceData]);
+
+          if (error) {
+            console.error('Supabase error:', error);
+            throw new Error('Failed to add produce');
+          }
+          
+          // Immediately refresh the produce list
+          await loadProduces();
+          return true;
+        } catch (error) {
+          console.error('Error adding produce:', error);
+          throw error; // Propagate error to AIChat for proper error handling
+        }
+      case 'UPDATE_ORDER':
+        try {
+          const { error } = await supabase
+            .from('orders')
+            .update({ status: data.status })
+            .eq('id', data.id);
+
+          if (error) {
+            console.error('Supabase error:', error);
+            throw new Error('Failed to update order');
+          }
+
+          // Refresh orders list
+          await loadOrders();
+          return true;
+        } catch (error) {
+          console.error('Error updating order:', error);
+          throw error;
+        }
+      case 'UPDATE_PRODUCE':
+        try {
+          const { error } = await supabase
+            .from('produce')
+            .update(data.updates)
+            .eq('id', data.id);
+          
+          if (error) throw error;
+          await loadProduces();
+        } catch (error) {
+          console.error('Error updating produce:', error);
+        }
+        break;
+
+      default:
+        console.log('Unknown action:', action);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <Header
-          title={`Welcome, ${user?.name}`}
-          subtitle="Manage your produce and orders"
-        />
+        <div className="flex justify-between items-center mb-6">
+          <Header
+            title={`Welcome, ${user?.name}`}
+            subtitle="Manage your produce and orders"
+          />
+          <button
+            onClick={() => setShowAIChat(!showAIChat)}
+            className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 shadow-lg transition-all duration-200 ease-in-out"
+          >
+            <MessageSquare className="w-5 h-5 mr-2" />
+            AI Assistant
+          </button>
+        </div>
 
-        {/* Main Content */}
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3 mt-8">
-          {/* Quick Stats */}
+        {/* Quick Stats */}
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3 mt-4">
           <div className="bg-white rounded-xl shadow-lg hover:shadow-xl transition-shadow duration-300 p-6 border border-gray-100">
             <div className="flex items-center space-x-4">
               <div className="p-3 bg-green-100 rounded-lg">
@@ -246,172 +335,11 @@ export const FarmerDashboard: React.FC = () => {
             <Route path="/" element={<Navigate to="listings" replace />} />
             <Route
               path="listings"
-              element={
-                <div className="mt-12">
-                  <h2 className="text-2xl font-bold text-gray-900 mb-6">Your Produce Listings</h2>
-                  {error && (
-                    <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-6 py-4 rounded-lg flex items-center shadow-sm">
-                      <AlertCircle className="h-5 w-5 mr-3" />
-                      {error}
-                    </div>
-                  )}
-                  <div className="bg-white shadow-lg rounded-xl overflow-hidden border border-gray-100">
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead>
-                          <tr className="bg-gray-50">
-                            <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                              Name
-                            </th>
-                            <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                              Quantity
-                            </th>
-                            <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                              Price
-                            </th>
-                            <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                              Status
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {produces.map((produce) => (
-                            <tr key={produce.id} className="hover:bg-gray-50 transition-colors duration-200">
-                              <td className="px-6 py-4">
-                                <div className="text-sm font-medium text-gray-900">
-                                  {produce.name}
-                                </div>
-                                <div className="text-sm text-gray-500 mt-1">
-                                  {produce.description}
-                                </div>
-                              </td>
-                              <td className="px-6 py-4">
-                                <div className="text-sm text-gray-900 font-medium">
-                                  {produce.quantity} {produce.unit}
-                                </div>
-                              </td>
-                              <td className="px-6 py-4">
-                                <div className="text-sm text-gray-900 font-medium">
-                                  ₹{produce.price}/{produce.unit}
-                                </div>
-                              </td>
-                              <td className="px-6 py-4">
-                                <span className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${produce.status === 'available'
-                                  ? 'bg-green-100 text-green-800'
-                                  : 'bg-gray-100 text-gray-800'
-                                  }`}>
-                                  {produce.status}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              }
+              element={<ProduceListings produces={produces} error={error} />}
             />
             <Route
               path="orders"
-              element={
-                <div className="mt-8">
-                  <h2 className="text-2xl font-bold text-gray-900 mb-6">Incoming Orders</h2>
-                  <div className="bg-white shadow-lg rounded-xl overflow-hidden border border-gray-100">
-                    <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead>
-                <tr className="bg-gray-50">
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Order Details
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Buyer Details
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Quantity
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Total Price
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {orders.map((order) => (
-                  <tr key={order.id} className="hover:bg-gray-50 transition-colors duration-200">
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">
-                        {(order.produce as Produce).name}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        Order #{order.id.slice(0, 8)}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">
-                        {(order.buyer as any)?.name || 'Unknown Buyer'}
-                      </div>
-                      <div className="text-sm text-gray-500">
-                        {(order.buyer as any)?.phone || 'No phone number'}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm text-gray-900">
-                        {order.quantity} {(order.produce as Produce).unit}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">
-                        ₹{order.total_price}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span
-                        className={`px-3 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${order.status === 'completed' ? 'bg-green-100 text-green-800' : order.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : order.status === 'accepted' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'}`}
-                      >
-                        {order.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      {order.status === 'pending' && (
-                        <div className="flex space-x-2">
-                          <button
-                            onClick={() => handleOrderStatus(order.id, 'accepted')}
-                            className="px-3 py-1 bg-green-500 text-white text-sm rounded hover:bg-green-600 transition-colors"
-                          >
-                            Accept
-                          </button>
-                          <button
-                            onClick={() => handleOrderStatus(order.id, 'declined')}
-                            className="px-3 py-1 bg-red-500 text-white text-sm rounded hover:bg-red-600 transition-colors"
-                          >
-                            Decline
-                          </button>
-                        </div>
-                      )}
-                      {order.status === 'accepted' && (
-                        <button
-                          onClick={() => handleOrderStatus(order.id, 'completed')}
-                          className="px-3 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 transition-colors"
-                        >
-                          Mark as Completed
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-              }
+              element={<IncomingOrders orders={orders} onOrderStatusChange={handleOrderStatus} />}
             />
           </Routes>
         </div>
@@ -526,6 +454,11 @@ export const FarmerDashboard: React.FC = () => {
                 </div>
               </form>
             </div>
+          </div>
+        )}
+        {showAIChat && (
+          <div className="absolute bottom-16 right-0 w-[450px] mb-2">
+            <AIChat onAction={handleAIAction} />
           </div>
         )}
       </div>

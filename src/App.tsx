@@ -1,111 +1,67 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { Home } from './pages/Home';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { supabase } from './lib/supabase';
+import { useAuthStore } from './store/authStore';
 import { Login } from './pages/Login';
 import { Register } from './pages/Register';
 import { FarmerDashboard } from './pages/FarmerDashboard';
 import { BuyerDashboard } from './pages/BuyerDashboard';
-import { ProtectedRoute } from './components/ProtectedRoute';
-import { supabase } from './lib/supabase';
-import { useAuthStore } from './store/authStore';
+import { Home } from './pages/Home';
+
+// Protected route wrapper component
+const ProtectedRoute: React.FC<{ element: React.ReactNode }> = ({ element }) => {
+  const { isAuthenticated, user } = useAuthStore();
+  
+  if (!isAuthenticated || !user) {
+    return <Navigate to="/login" replace />;
+  }
+  
+  return <>{element}</>;
+};
 
 function App() {
-  const setUser = useAuthStore((state) => state.setUser);
   const [isLoading, setIsLoading] = useState(true);
+  const { user, isAuthenticated, initialize, isInitialized } = useAuthStore();
 
   useEffect(() => {
     let mounted = true;
-    let timeoutId: NodeJS.Timeout;
 
-    const initAuth = async () => {
-      try {
-        timeoutId = setTimeout(() => {
-          if (mounted) {
-            setIsLoading(false);
-            setUser(null);
-            console.error('Auth initialization timed out - please check your network connection');
-          }
-        }, 30000); // Increased timeout to 30 seconds
-
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        if (!mounted) return;
-        if (sessionError) {
-          console.error('Session error:', sessionError);
-          throw sessionError;
+    const initApp = async () => {
+      if (!isInitialized) {
+        console.log('Initializing app...');
+        try {
+          await initialize();
+        } catch (error) {
+          console.error('Initialization error:', error);
         }
-
-        if (session?.user) {
-          const { data: profile, error: profileError } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-          
-          if (!mounted) return;
-          if (profileError) {
-            console.error('Profile error:', profileError);
-            throw profileError;
-          }
-          if (profile) {
-            setUser(profile);
-          } else {
-            setUser(null);
-            console.error('Profile not found for authenticated user');
-          }
-        } else {
-          setUser(null);
-        }
-      } catch (error) {
-        if (mounted) {
-          console.error('Error initializing auth:', error);
-          setUser(null);
-        }
-      } finally {
-        if (mounted) {
-          clearTimeout(timeoutId);
-          setIsLoading(false);
-        }
+      }
+      
+      if (mounted) {
+        setIsLoading(false);
       }
     };
 
-    initAuth();
+    initApp();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
+    return () => {
+      mounted = false;
+    };
+  }, [initialize, isInitialized]);
+
+  // Set up auth state listener
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      console.log('Auth state changed:', event, !!session);
       
-      try {
-        if (session?.user) {
-          const { data: profile, error: profileError } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
-
-          if (!mounted) return;
-          if (profileError) throw profileError;
-          if (profile) {
-            setUser(profile);
-          } else {
-            setUser(null);
-            console.error('Profile not found for authenticated user');
-          }
-        } else {
-          setUser(null);
-        }
-      } catch (error) {
-        if (mounted) {
-          console.error('Error handling auth state change:', error);
-          setUser(null);
-        }
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') {
+        initialize();
       }
     });
 
     return () => {
-      mounted = false;
-      clearTimeout(timeoutId);
       subscription.unsubscribe();
     };
-  }, []);
+  }, [initialize]);
 
   if (isLoading) {
     return (
@@ -116,30 +72,47 @@ function App() {
   }
 
   return (
-    <Router>
+    <BrowserRouter>
       <Routes>
+        {/* Public routes */}
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
+
+        {/* Protected routes */}
         <Route
           path="/farmer/*"
           element={
-            <ProtectedRoute role="farmer">
-              <FarmerDashboard />
-            </ProtectedRoute>
+            <ProtectedRoute
+              element={
+                user?.role === 'farmer' ? (
+                  <FarmerDashboard />
+                ) : (
+                  <Navigate to={`/${user?.role || ''}`} replace />
+                )
+              }
+            />
           }
         />
         <Route
           path="/buyer/*"
           element={
-            <ProtectedRoute role="buyer">
-              <BuyerDashboard />
-            </ProtectedRoute>
+            <ProtectedRoute
+              element={
+                user?.role === 'buyer' ? (
+                  <BuyerDashboard />
+                ) : (
+                  <Navigate to={`/${user?.role || ''}`} replace />
+                )
+              }
+            />
           }
         />
+
+        {/* Catch all route */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </Router>
+    </BrowserRouter>
   );
 }
 

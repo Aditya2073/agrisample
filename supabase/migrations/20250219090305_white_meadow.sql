@@ -25,9 +25,10 @@
       - `id` (uuid, primary key)
       - `produce_id` (uuid) - references produce.id
       - `buyer_id` (uuid) - references profiles.id
+      - `seller_id` (uuid) - references profiles.id
       - `quantity` (numeric)
       - `total_price` (numeric)
-      - `status` (text) - 'pending', 'accepted', 'declined', or 'completed'
+      - `status` (text) - 'pending', 'completed', or 'cancelled'
       - `created_at` (timestamp)
 
   2. Security
@@ -63,9 +64,10 @@ CREATE TABLE IF NOT EXISTS orders (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   produce_id uuid REFERENCES produce(id) NOT NULL,
   buyer_id uuid REFERENCES profiles(id) NOT NULL,
+  seller_id uuid REFERENCES profiles(id) NOT NULL,
   quantity numeric NOT NULL CHECK (quantity > 0),
   total_price numeric NOT NULL CHECK (total_price >= 0),
-  status text NOT NULL CHECK (status IN ('pending', 'accepted', 'declined', 'completed')) DEFAULT 'pending',
+  status text NOT NULL CHECK (status IN ('pending', 'completed', 'cancelled')) DEFAULT 'pending',
   created_at timestamptz DEFAULT now()
 );
 
